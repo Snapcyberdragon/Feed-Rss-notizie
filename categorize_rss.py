@@ -316,6 +316,7 @@ class FeedProcessor:
         except Exception as e:
             logging.error(f"GitHub push error: {str(e)}")
 
+
 def main():
     processor = FeedProcessor()
     last_push = time.time()
@@ -323,42 +324,76 @@ def main():
     try:
         while True:
             start_time = time.time()
+            logging.debug("=== NUOVO CICLO ===")
             
-            # Fetch feed
+            # Fase 1: Fetch feed
+            logging.debug(f"[FASE 1] Fetching da {len(processor.parse_opml())} feed...")
             with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
                 feeds = processor.parse_opml()
+                logging.debug(f"Feed da processare: {feeds}")
                 future_to_url = {executor.submit(processor.fetch_feed, url): url for url in feeds}
                 entries = []
                 
                 for future in as_completed(future_to_url):
-                    entries.extend(future.result())
+                    result = future.result()
+                    logging.debug(f"Feed {future_to_url[future]} restituiti {len(result)} articoli")
+                    entries.extend(result)
+            logging.debug(f"[FASE 1 COMPLETATA] Articoli totali: {len(entries)}")
 
-            # Process entries
+            # Fase 2: Processamento
+            logging.debug("[FASE 2] Inizio processamento articoli...")
             with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
                 futures = [executor.submit(processor.process_entry, entry) for entry in entries]
                 processed = 0
                 
                 for future in as_completed(futures):
-                    if future.result() is not None:
+                    result = future.result()
+                    if result:
                         processed += 1
+                        logging.debug(f"Articolo processato: {result}")
                         
                 processor.save_cache()
+            logging.debug(f"[FASE 2 COMPLETATA] Processati {processed}/{len(entries)} articoli")
+
+            # Fase 3: Push GitHub
+            logging.debug("[FASE 3] Verifica push GitHub...")
+            current_time = time.time()
+            time_since_last_push = current_time - last_push
+            logging.debug(f"Tempo dall'ultimo push: {time_since_last_push}s")
             
-            # Push ogni 6 ore
-            if time.time() - last_push > 21600:
-                processor.push_to_github()
-                last_push = time.time()
-            
+            if time_since_last_push > 21600:
+                logging.debug("Inizio push GitHub...")
+                try:
+                    processor.push_to_github()
+                    last_push = time.time()
+                    logging.debug("Push GitHub completato con successo")
+                    logging.debug("Stato repository:")
+                    logging.debug(processor.repo.git.status())
+                except Exception as e:
+                    logging.error(f"Errore durante il push: {str(e)}")
+                    logging.debug("Stato repository fallito:")
+                    logging.debug(processor.repo.git.status())
+            else:
+                logging.debug("Push GitHub non necessario")
+
+            # Gestione intervallo
             elapsed = time.time() - start_time
-            logging.info(f"✅ Processati {processed} articoli in {elapsed:.1f}s")
             sleep_time = max(CHECK_INTERVAL - elapsed, 60)
+            logging.debug(f"Tempo ciclo: {elapsed:.2f}s - Sleep per {sleep_time}s")
+            logging.debug("=== FINE CICLO ===")
+            
             time.sleep(sleep_time)
             
     except KeyboardInterrupt:
+        logging.debug("Interruzione manuale rilevata")
+        logging.debug("Tentativo push finale...")
         processor.push_to_github()
+        logging.debug("Push finale completato")
         logging.info("⏹️  Interruzione manuale")
+    
     except Exception as e:
-        logging.error(f"Errore critico: {str(e)}")
+        logging.error(f"Errore critico: {str(e)}", exc_info=True)
+        os._exit(1)
 
 if __name__ == "__main__":
     main()
