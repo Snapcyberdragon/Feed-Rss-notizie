@@ -33,7 +33,7 @@ OPML_REFRESH_INTERVAL = 86400  # 24 ore
 
 # Configurazione logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(os.path.expanduser("~/rss_project/rss.log")),
